@@ -1,12 +1,10 @@
-name: Release
+name: BUILDCCSWITCH
 
 on:
   push:
     tags:
-      - 'v*' # 仅在打 v* 标签时触发完整打包发布，避免日常提交浪费 CI 资源
-  workflow_dispatch: # 保留手动触发作为备用
-
-# 移除了全局的 permissions: contents: write，遵循最小权限原则
+      - 'v*'
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref_name }}
@@ -14,50 +12,22 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: windows-2022
-          - os: ubuntu-22.04
-          - os: ubuntu-22.04-arm
-            arch: arm64
-          - os: macos-14
+    runs-on: windows-2022 # 直接指定 Windows 构建机，移除冗余的 matrix
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4 # 修复版本号
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4 # 修复版本号
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Add macOS targets
-        if: runner.os == 'macOS'
-        run: |
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
-
-      - name: Install Linux system deps
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config curl wget file patchelf \
-            libssl-dev rpm flatpak flatpak-builder elfutils xdg-utils \
-            libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
-          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
-            || sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.0-dev
-          sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
-            || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
-
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4 # 修复版本号
+        uses: pnpm/action-setup@v4
         with:
           version: 10.12.3
           run_install: false
@@ -68,79 +38,26 @@ jobs:
         run: echo "path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
 
       - name: Setup pnpm cache
-        uses: actions/cache@v4 # 修复版本号
+        uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-store-
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
-      - name: Build Tauri App (macOS Universal)
-        if: runner.os == 'macOS'
-        shell: bash
-        timeout-minutes: 60
-        run: |
-          # 移除了盲目的 bash 循环重试逻辑，让真正的编译错误能立刻暴露
-          echo "=== Starting macOS universal build ==="
-          pnpm tauri build --target universal-apple-darwin
-
       - name: Build Tauri App (Windows)
-        if: runner.os == 'Windows'
         run: pnpm tauri build
 
-      - name: Build Tauri App (Linux)
-        if: runner.os == 'Linux'
-        run: pnpm tauri build --bundles appimage,deb,rpm
-
-      - name: Prepare macOS Assets
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p release-assets
-          VERSION="${GITHUB_REF_NAME//\//-}"
-          TAR_GZ=""; APP_PATH=""; DMG_PATH=""
-          for path in \
-            "src-tauri/target/universal-apple-darwin/release/bundle/dmg" \
-            "src-tauri/target/universal-apple-darwin/release/bundle/macos" \
-            "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg" \
-            "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" \
-            "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg" \
-            "src-tauri/target/x86_64-apple-darwin/release/bundle/macos" \
-            "src-tauri/target/release/bundle/dmg" \
-            "src-tauri/target/release/bundle/macos"; do
-            if [ -d "$path" ]; then
-              [ -z "$TAR_GZ" ]   && TAR_GZ=$(find "$path" -maxdepth 1 -name "*.tar.gz" -type f | head -1 || true)
-              [ -z "$APP_PATH" ] && APP_PATH=$(find "$path" -maxdepth 1 -name "*.app" -type d | head -1 || true)
-              [ -z "$DMG_PATH" ] && DMG_PATH=$(find "$path" -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
-            fi
-          done
-          if [ -z "$APP_PATH" ]; then
-            echo "❌ No .app found" >&2
-            exit 1
-          fi
-          NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
-          if [ -n "$TAR_GZ" ]; then
-            cp "$TAR_GZ" "release-assets/$NEW_TAR_GZ"
-            [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/$NEW_TAR_GZ.sig" || echo ".sig for macOS not found"
-          fi
-          if [ -n "$DMG_PATH" ]; then
-            NEW_DMG="CC-Switch-${VERSION}-macOS.dmg"
-            cp "$DMG_PATH" "release-assets/$NEW_DMG"
-          fi
-          NEW_ZIP="CC-Switch-${VERSION}-macOS.zip"
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/$NEW_ZIP"
-          echo "✅ macOS assets prepared"
-
       - name: Prepare Windows Assets
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           $VERSION = $env:GITHUB_REF_NAME -replace '/', '-'
+          
+          # 查找 MSI 安装包
           $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle/msi' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($null -eq $msi) {
             $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -157,6 +74,8 @@ jobs:
           } else {
             Write-Warning 'No Windows MSI installer found'
           }
+          
+          # 制作便携版压缩包
           $exeCandidates = @(
             'src-tauri/target/release/cc-switch.exe',
             'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
@@ -175,29 +94,10 @@ jobs:
             Write-Host "Windows portable zip created"
           }
 
-      - name: Prepare Linux Assets
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p release-assets
-          VERSION="${GITHUB_REF_NAME//\//-}"
-          ARCH="${{ matrix.arch || 'x86_64' }}"
-          APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
-          if [ -n "$APPIMAGE" ]; then
-            NEW_APPIMAGE="CC-Switch-${VERSION}-Linux-${ARCH}.AppImage"
-            cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
-            [ -f "$APPIMAGE.sig" ] && cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig" || echo ".sig for AppImage not found"
-          fi
-          DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
-          [ -n "$DEB" ] && cp "$DEB" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.deb"
-          RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
-          [ -n "$RPM" ] && cp "$RPM" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
-
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v4 # 修复版本号
+        uses: actions/upload-artifact@v4
         with:
-          name: release-assets-${{ runner.os }}-${{ matrix.arch || runner.arch }}
+          name: release-assets-Windows-x64 # 移除了 runner.arch 依赖，直接硬编码名称
           path: release-assets/*
           if-no-files-found: error
 
@@ -207,17 +107,17 @@ jobs:
     needs: release
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
-      contents: write # 将写权限严格限制在执行发布的 Job 中
+      contents: write
     steps:
       - name: Download built release artifacts
-        uses: actions/download-artifact@v4 # 修复版本号
+        uses: actions/download-artifact@v4
         with:
           pattern: release-assets-*
           path: release-assets
           merge-multiple: true
 
       - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2 # 修复了错误的 v3 超前版本
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: CC Switch ${{ github.ref_name }}
@@ -225,9 +125,7 @@ jobs:
           body: |
             ## CC Switch ${{ github.ref_name }} (route-mode fork)
             ### Downloads
-            - **macOS**: `.dmg` or `.zip` (未签名 — 若提示文件损坏，请在终端执行 `xattr -cr /Applications/CC\ Switch.app` 后再运行)
             - **Windows**: `.msi` (installer) or `Portable.zip`
-            - **Linux**: `.AppImage` / `.deb` / `.rpm`
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
