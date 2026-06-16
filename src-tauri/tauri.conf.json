@@ -60,7 +60,7 @@
       }
     },
     "updater": {
-      "active": false, // 将这里的 true 改为 false 即可关闭更新器
+      "active": false,
       "endpoints": [
         "https://releases.myapp.com/{{target}}/{{current_version}}"
       ],
