@@ -307,44 +307,6 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             set_windows_app_user_model_id(app.handle());
 
-            // 注册 Updater 插件（桌面端）
-            #[cfg(desktop)]
-            // 初始化日志（单文件输出到 <app_config_dir>/logs/cc-switch.log）
-            {
-                use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
-
-                let log_dir = panic_hook::get_log_dir();
-
-                // 确保日志目录存在
-                if let Err(e) = std::fs::create_dir_all(&log_dir) {
-                    eprintln!("创建日志目录失败: {e}");
-                }
-
-                // 启动时删除旧日志文件，实现单文件覆盖效果
-                let log_file_path = log_dir.join("cc-switch.log");
-                let _ = std::fs::remove_file(&log_file_path);
-
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        // 初始化为 Trace，允许后续通过 log::set_max_level() 动态调整级别
-                        .level(log::LevelFilter::Trace)
-                        .targets([
-                            Target::new(TargetKind::Stdout),
-                            Target::new(TargetKind::Folder {
-                                path: log_dir,
-                                file_name: Some("cc-switch".into()),
-                            }),
-                        ])
-                        // 单文件模式：启动时删除旧文件，达到大小时轮转
-                        // 注意：KeepSome(n) 内部会做 n-2 运算，n=1 会导致 usize 下溢
-                        // KeepSome(2) 是最小安全值，表示不保留轮转文件
-                        .rotation_strategy(RotationStrategy::KeepSome(2))
-                        // 单文件大小限制 1GB
-                        .max_file_size(1024 * 1024 * 1024)
-                        .timezone_strategy(TimezoneStrategy::UseLocal)
-                        .build(),
-                )?;
-            }
 
             // 注入 AppHandle 给 usage_events，让无 AppHandle 持有的写日志路径
             // 也能向前端推送 `usage-log-recorded`。
