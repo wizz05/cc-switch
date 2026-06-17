@@ -1,7 +1,6 @@
 #![allow(non_snake_case)]
 
 use tauri::AppHandle;
-use tauri_plugin_updater::UpdaterExt;
 
 fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
