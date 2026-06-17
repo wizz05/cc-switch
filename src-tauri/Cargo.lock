@@ -785,7 +785,6 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-single-instance",
  "tauri-plugin-store",
- "tauri-plugin-updater",
  "tauri-plugin-window-state",
  "tempfile",
  "thiserror 2.0.18",
